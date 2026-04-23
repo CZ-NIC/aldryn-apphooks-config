@@ -1,6 +1,7 @@
 Changelog
 =========
 
+* Fix: Enable Aldryn queryset in admin (draft) mode.
 
 0.7.0 (2023-05-07)
 ==================

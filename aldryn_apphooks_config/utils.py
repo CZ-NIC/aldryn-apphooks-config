@@ -23,6 +23,9 @@ def get_app_instance(request):
             config = None
             with override(get_language_from_request(request, check_path=True)):
                 namespace = resolve(request.path_info).namespace
+                if namespace == "admin" and request.current_page.application_namespace:
+                    # Enable Aldryn queryset in admin (draft) mode.
+                    namespace = request.current_page.application_namespace
                 config = app.get_config(namespace)
             return namespace, config
         except Resolver404:
