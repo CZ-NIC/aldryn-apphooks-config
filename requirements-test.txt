@@ -7,3 +7,4 @@ django-parler>=1.4
 https://github.com/ella/django-appdata/archive/refs/heads/master.zip
 coverage
 coveralls>=2.0
+packaging

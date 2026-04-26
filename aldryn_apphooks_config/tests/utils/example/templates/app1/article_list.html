@@ -1,7 +1,14 @@
 {% extends CMS_TEMPLATE %}
 
 {% block content %}
+<pre>
 namespace:{{view.namespace}}
 property:{{view.config.property}}
 objects:{{object_list.count}}
+</pre>
+<div class="object-list">
+    {% for item in object_list %}
+        <div id="{{ item.pk }}">{{ item.title }}</div>
+    {% endfor %}
+</div>
 {% endblock content %}

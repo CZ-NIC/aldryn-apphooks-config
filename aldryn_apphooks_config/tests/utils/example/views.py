@@ -19,7 +19,8 @@ class ArticleList(AppConfigMixin, ListView):
     model = Article
 
     def get_template_names(self):
-        return "%s/article_list.html" % self.config.namespace
+        namespace = "app1" if self.config is None else self.config.namespace
+        return "%s/article_list.html" % namespace
 
     def get_queryset(self):
         return Article.objects.all().filter(section__namespace=self.namespace)
