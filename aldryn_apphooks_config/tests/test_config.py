@@ -1,16 +1,23 @@
 import os.path
+import sys
+import unittest
 from copy import deepcopy
 from io import StringIO
 
+import six
 from app_helper.base_test import BaseTestCase
-from cms import api
+from cms import __version__ as cms_version, api
 from cms.apphook_pool import apphook_pool
+from cms.test_utils.testcases import CMSTestCase
 from cms.utils.conf import get_cms_setting
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.http import SimpleCookie
 from django.template import RequestContext, Template
-from django.urls import reverse
+from django.test.client import RequestFactory
+from django.urls import clear_url_caches, reverse
 from django.utils.encoding import force_str
+from packaging import version
 
 from ..utils import get_app_instance, get_apphook_configs, get_apphook_field_names
 from .utils.example.models import (
@@ -22,11 +29,59 @@ from .utils.example.models import (
     TranslatableArticle,
 )
 
+current_cms_version, cms_version_40 = version.parse(cms_version), version.parse("4.0")
 
-class AppHookConfigTestCase(BaseTestCase):
+if current_cms_version >= cms_version_40:
+
+    # Django App Helper is not compatible with CMS > 3.x. Therefore, CMSTestCase is used,
+    class VersionTestCase(CMSTestCase):
+        def page_get_slug(self, page):
+            return page.get_slug(self.language)
+
+        def page_publish(self, page, language):
+            pass
+
+        def run_reload_urlconf(self):
+            from cms.appresolver import clear_app_resolvers, get_app_patterns
+            from django.conf import settings
+
+            six.moves.reload_module(sys.modules["cms.urls"])
+            six.moves.reload_module(sys.modules[settings.ROOT_URLCONF])
+            clear_url_caches()
+            clear_app_resolvers()
+            get_app_patterns()
+
+        def create_user_for_testcase(self):
+            self.user = get_user_model().objects.create(username="admin", is_superuser=True, is_staff=True)
+
+        def version_request(self, path):
+            return RequestFactory().get(path)
+
+else:
+
+    # BaseTestCase from Django App Helper is used to maintain tests for older CMS versions.
+    class VersionTestCase(BaseTestCase):
+        def page_get_slug(self, page):
+            return page.get_slug()
+
+        def page_publish(self, page, language):
+            page.publish(language)
+
+        def run_reload_urlconf(self):
+            self.reload_urlconf()
+
+        def create_user_for_testcase(self):
+            pass
+
+        def version_request(self, path):
+            return self.request(path)
+
+
+class AppHookConfigTestCase(VersionTestCase):
     def setUp(self):
         self.template = get_cms_setting("TEMPLATES")[0][0]
         self.language = settings.LANGUAGES[0][0]
+        self.create_user_for_testcase()
         self.root_page = api.create_page("root page", self.template, self.language, published=True)
         # This is needed in django CMS 3.5+ to keep the same tree across
         # all django CMS versions
@@ -75,9 +130,9 @@ class AppHookConfigTestCase(BaseTestCase):
 
         for page in self.root_page, self.page_1, self.page_2:
             for language, _ in settings.LANGUAGES[1:]:
-                api.create_title(language, page.get_slug(), page)
-                page.publish(language)
-        self.reload_urlconf()
+                api.create_title(language, self.page_get_slug(page), page)
+                self.page_publish(page, language)
+        self.run_reload_urlconf()
 
     def test_configs(self):
         app = apphook_pool.get_apphook(self.page_1.application_urls)
@@ -98,7 +153,7 @@ class AppHookConfigTestCase(BaseTestCase):
         self.assertEqual(("", None), config)
 
     def test_no_page(self):
-        request = self.request("/en/sample/login/")
+        request = self.version_request("/en/sample/login/")
         request.user = self.user
         request.session = {}
         request.cookies = SimpleCookie()
@@ -354,6 +409,7 @@ class AppHookConfigTestCase(BaseTestCase):
             self.assertContains(response, "<p>app1</p>")
             self.assertContains(response, 'name="config-property" type="text" value="app1_property"')
 
+    @unittest.skipIf(current_cms_version >= cms_version_40, "CMS version is higher than 3.x.")
     def test_admin(self):
         from django.contrib import admin
 
@@ -463,3 +519,41 @@ class AppHookConfigTestCase(BaseTestCase):
         obj = NotApphookedModel()
         configs = get_apphook_configs(obj)
         self.assertEqual(configs, [])
+
+    def test_page(self):
+        article = Article.objects.create(title="article_app_1", slug="article_app_1", section=self.ns_app_1)
+        response = self.client.get("/en/page_1/")
+        self.assertContains(response, "namespace:app1")
+        self.assertContains(response, "property:app1_property")
+        self.assertContains(response, "objects:1")
+        self.assertContains(
+            response,
+            """
+            <div class="object-list">
+                <div id="{}">article_app_1</div>
+            </div>""".format(article.pk),
+            html=True,
+        )
+
+    @unittest.skipUnless(current_cms_version >= cms_version_40, "CMS version is higher than 3.x.")
+    def test_preview_page(self):
+        from cms.models.contentmodels import PageContent
+        from django.contrib.contenttypes.models import ContentType
+
+        article = Article.objects.create(title="article_app_1", slug="article_app_1", section=self.ns_app_1)
+        content = self.page_1.get_content_obj(self.language)
+        page_content_type = ContentType.objects.get_for_model(PageContent)
+        url = reverse("admin:cms_placeholder_render_object_preview", args=(page_content_type.pk, content.pk))
+        self.client.force_login(self.user)
+        response = self.client.get(url)
+        self.assertContains(response, "namespace:app1")
+        self.assertContains(response, "property:app1_property")
+        self.assertContains(response, "objects:1")
+        self.assertContains(
+            response,
+            """
+            <div class="object-list">
+                <div id="{}">article_app_1</div>
+            </div>""".format(article.pk),
+            html=True,
+        )

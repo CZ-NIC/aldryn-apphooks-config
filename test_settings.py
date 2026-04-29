@@ -25,6 +25,7 @@ HELPER_SETTINGS = dict(
         "aldryn_apphooks_config.tests.utils.example",
         "parler",
     ],
+    CMS_CONFIRM_VERSION4=True,
 )
 
 
